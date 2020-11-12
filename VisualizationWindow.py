@@ -1,9 +1,12 @@
 from PySide2 import QtCore, QtWidgets, QtGui
 from PySide2.QtWidgets import QApplication
 import vtk
+from vtk.util.vtkImageImportFromArray import *
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 import sys
 from abc import ABCMeta, abstractmethod
+import SimpleITK as sitk
+import numpy as np
 
 # Main Window
 class MainWindow(QtWidgets.QMainWindow):
@@ -32,6 +35,7 @@ class SubWindow:
         self.ren = vtk.vtkRenderer()
         self.vtkWidget.GetRenderWindow().AddRenderer(self.ren)
         self.iren = self.vtkWidget.GetRenderWindow().GetInteractor()
+        self.iren.SetInteractorStyle(vtk.vtkInteractorStyleTrackballCamera())
     
     @abstractmethod
     def render(self, datapath = None):
@@ -40,25 +44,48 @@ class SubWindow:
 # Volumer Rendering Window
 class VolumeRender(SubWindow):
 
-    def render(self, datapath):
-        colors = vtk.vtkNamedColors()
+    def render(self, datapath, usingMask = False, maskpath = None):
+
+        data = sitk.ReadImage(datapath)
+        slices = sitk.GetArrayFromImage(data)
+        if usingMask:
+            mask = sitk.ReadImage(maskpath)
+            mask_slcies = sitk.GetArrayFromImage(mask)
+            mask_slcies[mask_slcies >= 1] = 1
+            slices = np.multiply(slices, mask_slcies)
+        spacing = data.GetSpacing()
+        origin = (0,0,0)
 
         # Create reader for the data
-        reader = vtk.vtkNIFTIImageReader()
-        reader.SetFileName(datapath)
+        reader = vtkImageImportFromArray()
+        reader.SetArray(slices)
+        reader.SetDataSpacing(spacing)
+        reader.SetDataOrigin(origin)
+        reader.Update()
 
         # Create transfer mapping scalar value to opacity
         opacityTransferFunction = vtk.vtkPiecewiseFunction()
-        opacityTransferFunction.AddPoint(20, 0.0)
-        opacityTransferFunction.AddPoint(255, 0.2)
+        #opacityTransferFunction.AddPoint(-400, 0.0)
+        #opacityTransferFunction.AddPoint(-380, 0.0)
+        #opacityTransferFunction.AddPoint(-370, 0.0)
+        opacityTransferFunction.AddPoint(-350, 0.0)
+        #opacityTransferFunction.AddPoint(-250, 0.0)
+        opacityTransferFunction.AddPoint(-250, 0.2)
+        opacityTransferFunction.AddPoint(-200, 0.7)
+        opacityTransferFunction.AddPoint(-150, 0.0)
+        opacityTransferFunction.AddPoint(-60, 0)
+        opacityTransferFunction.AddPoint(-50, 0.9)
+        #opacityTransferFunction.AddPoint(-30, 0.0)
+        #opacityTransferFunction.AddPoint(-20, 0.9)
+        #opacityTransferFunction.AddPoint(-50, 0.0)
+        opacityTransferFunction.AddPoint(0, 0.0)
 
         # Create transfer mapping scalar value to color.
         colorTransferFunction = vtk.vtkColorTransferFunction()
-        colorTransferFunction.AddRGBPoint(0.0, 0.0, 0.0, 0.0)
-        colorTransferFunction.AddRGBPoint(64.0, 1.0, 0.0, 0.0)
-        colorTransferFunction.AddRGBPoint(128.0, 0.0, 0.0, 1.0)
-        colorTransferFunction.AddRGBPoint(192.0, 0.0, 1.0, 0.0)
-        colorTransferFunction.AddRGBPoint(255.0, 0.0, 0.2, 0.0)
+        colorTransferFunction.AddRGBPoint(-300, 0, 0, 0)
+        colorTransferFunction.AddRGBPoint(-50, 1, 1, 0.5)
+        colorTransferFunction.AddRGBPoint(0, 1, 1, 1)
+        #colorTransferFunction.AddRGBPoint(-100, 0, 0, 1)
 
         # The property describes how the data will look.
         volumeProperty = vtk.vtkVolumeProperty()
@@ -68,27 +95,33 @@ class VolumeRender(SubWindow):
         volumeProperty.SetInterpolationTypeToLinear()
 
         # The mapper / ray cast function know how to render the data.
-        volumeMapper = vtk.vtkFixedPointVolumeRayCastMapper()
-        volumeMapper.SetInputConnection(reader.GetOutputPort())
+        self.volumeMapper = vtk.vtkFixedPointVolumeRayCastMapper()
+        self.volumeMapper.SetInputConnection(reader.GetOutputPort())
 
         # The volume holds the mapper and the property and
         # can be used to position/orient the volume.
         volume = vtk.vtkVolume()
-        volume.SetMapper(volumeMapper)
+        volume.SetMapper(self.volumeMapper)
         volume.SetProperty(volumeProperty)
-
-        
         self.ren.AddVolume(volume)
-        self.ren.SetBackground(colors.GetColor3d("Wheat"))
+        self.ren.SetBackground(0.7, 0.82, 1)
+
+        outline = vtk.vtkOutlineFilter()
+        outline.SetInputConnection(reader.GetOutputPort())
+        outlineMapper = vtk.vtkPolyDataMapper()
+        outlineMapper.SetInputConnection(outline.GetOutputPort())
+        outlineActor = vtk.vtkActor()
+        outlineActor.SetMapper(outlineMapper)
+        self.ren.AddActor(outlineActor)
+
         self.ren.GetActiveCamera().Azimuth(45)
         self.ren.GetActiveCamera().Elevation(30)
         self.ren.ResetCameraClippingRange()
         self.ren.ResetCamera()
         
         self.iren.Initialize()
-        
-
-
+        self.ren.Render()
+        self.iren.Start()
 
 if __name__ == '__main__':
     # Create an application
@@ -100,6 +133,9 @@ if __name__ == '__main__':
 
     # Add view to mainwindow
     view1 = VolumeRender(mainwindow, 0, 0)
-    view1.render('./1.nii')
+    view1.render('./data.nii', usingMask=True, maskpath='./mask.nii')
+
+    view2 = VolumeRender(mainwindow, 0, 1)
+    view2.render('./data.nii')
 
     sys.exit(app.exec_())
