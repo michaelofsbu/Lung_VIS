@@ -185,76 +185,84 @@ class SliceRender(SubWindow):
         else:
             self.sliceIndexPercent = sliceIndexPercent
 
+
     def render(self, datapath):    
         reader = vtk.vtkNIFTIImageReader()
         reader.SetFileName(datapath)
         reader.Update()
 
-        outline = vtk.vtkOutlineFilter()
-        outline.SetInputConnection(reader.GetOutputPort())
-        
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(outline.GetOutputPort())
-        
-        actor = vtk.vtkActor()
-        actor.SetMapper(mapper)
-        style = vtk.vtkInteractorStyleTerrain()
-        self.iren.SetInteractorStyle(style)
-        self.iren.SetRenderWindow(self.renWin)
+        viewer = vtk.vtkImageViewer2()
+        viewer.SetInputConnection(reader.GetOutputPort())
 
-        picker = vtk.vtkCellPicker()
-        picker.SetTolerance(0.005)
+        viewer.SetupInteractor(self.iren)
+        viewer.SetRenderWindow(self.renWin)
 
-        planeWidget = vtk.vtkImagePlaneWidget()
-        planeWidget.SetInteractor(self.iren)
-        planeWidget.SetInputData(reader.GetOutput())
-        planeWidget.SetMarginSizeX(0.0)
-        planeWidget.SetMarginSizeY(0.0)
-            
         xMin, xMax, yMin, yMax, zMin, zMax = reader.GetExecutive().GetWholeExtent(reader.GetOutputInformation(0))
         if (self.orientation == 'x'):
             self.sliceIndex = int(self.sliceIndexPercent * (xMax - xMin) + xMin)
-            planeWidget.SetPlaneOrientationToXAxes()
+            viewer.SetSliceOrientationToYZ()
+            self.orientationTo = 'YZ'
         elif (self.orientation == 'y'):
             self.sliceIndex = int(self.sliceIndexPercent * (yMax - yMin) + yMin)
-            planeWidget.SetPlaneOrientationToYAxes()
+            viewer.SetSliceOrientationToXZ()
+            self.orientationTo = 'XZ'
         elif (self.orientation == 'z'):
             self.sliceIndex = int(self.sliceIndexPercent * (zMax - zMin) + zMin)
-            planeWidget.SetPlaneOrientationToZAxes()
+            viewer.SetSliceOrientationToXY()
+            self.orientationTo = 'XY'
         else:
             pass
-        print("You are looking slice {} on {}-axis".format(self.sliceIndex, self.orientation))
 
+        viewer.SetSlice(self.sliceIndex)
+
+        # slice status message
+        textProp = vtk.vtkTextProperty()
+        textProp.SetFontFamilyToCourier()
+        textProp.SetFontSize(15)
+        textProp.SetColor(0, 1.0, 0)
+        textProp.SetVerticalJustificationToBottom()
+        textProp.SetJustificationToLeft()
+
+        textMapper = vtk.vtkTextMapper()
+        msg = "Slice {} out of {} on orientation to {}".format(self.sliceIndex + 1, viewer.GetSliceMax(), self.orientationTo)
+        textMapper.SetInput(msg)
+        textMapper.SetTextProperty(textProp)
+
+        textActor = vtk.vtkActor2D()
+        textActor.SetMapper(textMapper)
+        textActor.SetPosition(15, 10)
+
+        viewer.GetRenderer().AddActor2D(textActor)
+
+        viewer.Render()
+        viewer.GetRenderer().ResetCamera()
+        viewer.Render()
+
+        def mouseForward(obj, event):
+            self.sliceIndex += 1
+            if (self.sliceIndex >= viewer.GetSliceMax()):
+                self.sliceIndex = viewer.GetSliceMax()
+            viewer.SetSlice(self.sliceIndex)
+            viewer.Render()
+            msg = "Slice {} out of {} on orientation to {}".format(self.sliceIndex + 1, viewer.GetSliceMax(), self.orientationTo)
+            textMapper.SetInput(msg)    
         
-        # planeWidget.SetKeyPressActivationValue(self.orientation)
-        planeWidget.SetPicker(picker)
-        planeWidget.RestrictPlaneToVolumeOn()
-        planeWidget.GetPlaneProperty().SetColor(0.0, 0.0, 1.0)
-        planeWidget.DisplayTextOn()
-        planeWidget.UpdatePlacement()
-        planeWidget.TextureInterpolateOff()
-        planeWidget.SetResliceInterpolateToLinear()
-        planeWidget.SetSliceIndex(self.sliceIndex)
-        planeWidget.GetTexturePlaneProperty().SetOpacity(1)
-        planeWidget.On()
-        planeWidget.InteractionOn()
+        def mouseBackward(obj, event):
+            self.sliceIndex -= 1
+            if (self.sliceIndex <= viewer.GetSliceMin()):
+                self.sliceIndex = viewer.GetSliceMin()
+            viewer.SetSlice(self.sliceIndex)
+            viewer.Render()
+            msg = "Slice {} out of {} on orientation to {}".format(self.sliceIndex + 1, viewer.GetSliceMax(), self.orientationTo)
+            textMapper.SetInput(msg)
 
-        self.ren.AddActor(actor)
-        
+        self.iren.RemoveObservers('MouseWheelForwardEvent')
+        self.iren.RemoveObservers('MouseWheelBackwardEvent')
+        self.iren.AddObserver('MouseWheelForwardEvent', mouseForward)
+        self.iren.AddObserver('MouseWheelBackwardEvent', mouseBackward)
 
-        colorMap = vtk.vtkImageMapToColors()
-        colorMap.PassAlphaToOutputOff() # use in RGBA
-        colorMap.SetActiveComponent(0)
-        colorMap.SetOutputFormatToLuminance()
-        colorMap.SetInputData(planeWidget.GetResliceOutput())
-        colorMap.SetLookupTable(planeWidget.GetLookupTable())
-        actor1 = vtk.vtkImageActor()
-        actor1.PickableOff()
-        actor1.SetInputData(colorMap.GetOutput())
-        self.ren.AddActor(actor1)
 
         self.iren.Initialize()
-        self.renWin.Render()
         self.iren.Start()
         
 
