@@ -191,6 +191,8 @@ class VolumeRender(SubWindow):
         self.ren.ResetCamera()
         
         self.iren.Initialize()
+        #self.ren.Render()
+        #self.renWin.Render()
         self.iren.Start()
 
 # Class for 2d slice rendering
