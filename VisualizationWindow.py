@@ -175,10 +175,10 @@ class VolumeRender(SubWindow):
 class SliceRender(SubWindow):
     def __init__(self, parent, row, column, orientation, sliceIndexPercent):
         super().__init__(parent, row, column)
-        if (orientation in ['x', 'y', 'z']):
+        if (orientation in ['Coronal', 'Sagittal', 'Axial']):
             self.orientation = orientation
         else:
-            self.orientation = 'x'
+            self.orientation = 'Axial'
 
         if (sliceIndexPercent > 1 or sliceIndexPercent < 0):
             self.sliceIndexPercent = 0.5
@@ -198,23 +198,37 @@ class SliceRender(SubWindow):
         viewer.SetRenderWindow(self.renWin)
 
         xMin, xMax, yMin, yMax, zMin, zMax = reader.GetExecutive().GetWholeExtent(reader.GetOutputInformation(0))
-        if (self.orientation == 'x'):
+        if (self.orientation == 'Coronal'):
             self.sliceIndex = int(self.sliceIndexPercent * (xMax - xMin) + xMin)
             viewer.SetSliceOrientationToYZ()
-            self.orientationTo = 'YZ'
-        elif (self.orientation == 'y'):
+            self.orientationTo = 'Coronal'
+        elif (self.orientation == 'Sagittal'):
             self.sliceIndex = int(self.sliceIndexPercent * (yMax - yMin) + yMin)
             viewer.SetSliceOrientationToXZ()
-            self.orientationTo = 'XZ'
-        elif (self.orientation == 'z'):
+            self.orientationTo = 'Sagittal'
+        elif (self.orientation == 'Axial'):
             self.sliceIndex = int(self.sliceIndexPercent * (zMax - zMin) + zMin)
             viewer.SetSliceOrientationToXY()
-            self.orientationTo = 'XY'
+            self.orientationTo = 'Axial'
+            # flip vertically
+            render = viewer.GetRenderer()
+            vup = render.GetActiveCamera().GetViewUp()
+            cameraPosition = render.GetActiveCamera().GetPosition()
+            cameraFocalPoint = render.GetActiveCamera().GetPosition()
+            vup = np.asarray(vup)
+            cameraPosition = np.asarray(cameraPosition)
+            for i in range(3):
+                vup[i] = -vup[i]
+                cameraPosition[i] = 2.0 * cameraFocalPoint[i] - cameraPosition[i]
+            render.GetActiveCamera().SetPosition(cameraPosition)
+            render.GetActiveCamera().SetViewUp(vup)
+            render.ResetCameraClippingRange()
+            viewer.Render()
         else:
             pass
 
         viewer.SetSlice(self.sliceIndex)
-
+        
         # slice status message
         textProp = vtk.vtkTextProperty()
         textProp.SetFontFamilyToCourier()
@@ -224,7 +238,7 @@ class SliceRender(SubWindow):
         textProp.SetJustificationToLeft()
 
         textMapper = vtk.vtkTextMapper()
-        msg = "Slice {} out of {} on orientation to {}".format(self.sliceIndex + 1, viewer.GetSliceMax(), self.orientationTo)
+        msg = "{} View \nSlice: {}/{}".format(self.orientationTo, self.sliceIndex + 1, viewer.GetSliceMax())
         textMapper.SetInput(msg)
         textMapper.SetTextProperty(textProp)
 
@@ -244,7 +258,7 @@ class SliceRender(SubWindow):
                 self.sliceIndex = viewer.GetSliceMax()
             viewer.SetSlice(self.sliceIndex)
             viewer.Render()
-            msg = "Slice {} out of {} on orientation to {}".format(self.sliceIndex + 1, viewer.GetSliceMax(), self.orientationTo)
+            msg = "{} View \nSlice: {}/{}".format(self.orientationTo, self.sliceIndex + 1, viewer.GetSliceMax())
             textMapper.SetInput(msg)    
         
         def mouseBackward(obj, event):
@@ -253,7 +267,7 @@ class SliceRender(SubWindow):
                 self.sliceIndex = viewer.GetSliceMin()
             viewer.SetSlice(self.sliceIndex)
             viewer.Render()
-            msg = "Slice {} out of {} on orientation to {}".format(self.sliceIndex + 1, viewer.GetSliceMax(), self.orientationTo)
+            msg = "{} View \nSlice: {}/{}".format(self.orientationTo, self.sliceIndex + 1, viewer.GetSliceMax())
             textMapper.SetInput(msg)
 
         self.iren.RemoveObservers('MouseWheelForwardEvent')
@@ -278,13 +292,13 @@ if __name__ == '__main__':
     view1 = VolumeRender(mainwindow, 0, 1)
     view1.render('./data.nii', usingMask=True, maskpath='./mask.nii')
 
-    view2 = SliceRender(mainwindow, 0, 0, 'z', 0.4)
+    view2 = SliceRender(mainwindow, 0, 0, 'Axial', 0.4)
     view2.render('./data.nii')
 
-    view3 = SliceRender(mainwindow, 1, 0, 'x', 0.4)
+    view3 = SliceRender(mainwindow, 1, 0, 'Coronal', 0.4)
     view3.render('./data.nii')
 
-    view4 = SliceRender(mainwindow, 1, 1, 'y', 0.4)
+    view4 = SliceRender(mainwindow, 1, 1, 'Sagittal', 0.4)
     view4.render('./data.nii')
 
     sys.exit(app.exec_())
