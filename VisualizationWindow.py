@@ -19,6 +19,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.volumeReader = vtk.vtkNIFTIImageReader()
         self.maskReader = vtk.vtkNIFTIImageReader()
 
+        self.volumeReader.SetFileName('./data.nii')
+        self.volumeReader.SetDataSpacing(self.spacing)
+        self.volumeReader.SetDataOrigin(self.origin)
+        self.volumeReader.Update()
+        self.maskReader.SetFileName('./mask.nii')
+        self.maskReader.SetDataSpacing(self.spacing)
+        self.maskReader.SetDataOrigin(self.origin)
+        self.maskReader.Update()
+        '''
         volumeInit = np.zeros((300, 512, 512))
         #print(volumeInit.shape)
         self.volumeReader.SetInputDataObject(self.to_vtkimage(volumeInit, self.spacing))
@@ -28,7 +37,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.maskReader.Update()
         #print(self.volumeReader.GetOutput().GetDimensions())
         #print(self.maskReader.GetOutput().GetDimensions())
-        
+        '''
         self.volumeloaded = False
         self.maskloaded = False
         
@@ -108,20 +117,29 @@ class SubWindow:
     __metaclass__ = ABCMeta
  
     def __init__(self, parent, row, column):
-        # Interface to the main window
-        self.vtkWidget = QVTKRenderWindowInteractor()
+        # Interface to the main window 
+        self.ren = vtk.vtkRenderer()
+        self.renWin = vtk.vtkRenderWindow()
+        self.renWin.AddRenderer(self.ren)
+        self.iren = vtk.vtkGenericRenderWindowInteractor()
+        self.iren.SetRenderWindow(self.renWin)
+        self.iren.SetInteractorStyle(vtk.vtkInteractorStyleTrackballCamera())
+
+        self.vtkWidget = QVTKRenderWindowInteractor(parent = parent.centralWidget(), rw = self.renWin, iren = self.iren)
         parent.renderLayout.addWidget(self.vtkWidget, row, column)
         # Create standard render, render window and interactor
-        self.ren = vtk.vtkRenderer()
-        self.renWin = self.vtkWidget.GetRenderWindow()
-        self.renWin.AddRenderer(self.ren)
-        self.iren = self.renWin.GetInteractor()
+        #self.ren = vtk.vtkRenderer()
+        #self.renWin = self.vtkWidget.GetRenderWindow()
+        #self.renWin.AddRenderer(self.ren)
+        #self.iren = self.renWin.GetInteractor()
+        #self.iren.SetRenderWindow(self.renWin)
+        #self.iren.SetRenderWindow(self.renWin)
         self.iren.SetInteractorStyle(vtk.vtkInteractorStyleTrackballCamera())
 
         self.parent = parent
     
     @abstractmethod
-    def render(self, datapath = None):
+    def render(self):
         pass
 
 # Volumer Rendering Window
@@ -161,17 +179,17 @@ class VolumeRender(SubWindow):
         volumeProperty.SetInterpolationTypeToLinear()
 
         # The mapper / ray cast function know how to render the data.
-        volumeMapper = vtk.vtkGPUVolumeRayCastMapper()
-        volumeMapper.SetInputData(self.parent.volumeReader.GetOutput())
+        self.volumeMapper = vtk.vtkGPUVolumeRayCastMapper()
+        self.volumeMapper.SetInputData(self.parent.volumeReader.GetOutput())
         if usingMask:
-            volumeMapper.SetMaskTypeToBinary()
-            volumeMapper.SetMaskInput(self.parent.maskReader.GetOutput())
+            self.volumeMapper.SetMaskTypeToBinary()
+            self.volumeMapper.SetMaskInput(self.parent.maskReader.GetOutput())
             
 
         # The volume holds the mapper and the property and
         # can be used to position/orient the volume.
         volume = vtk.vtkVolume()
-        volume.SetMapper(volumeMapper)
+        volume.SetMapper(self.volumeMapper)
         volume.SetProperty(volumeProperty)
         self.ren.AddVolume(volume)
         self.ren.SetBackground(0.7, 0.82, 1)
@@ -185,15 +203,58 @@ class VolumeRender(SubWindow):
         outlineActor.SetMapper(outlineMapper)
         self.ren.AddActor(outlineActor)
 
+        # Set Box Widget
+        boxWidget = vtk.vtkBoxWidget()
+        boxWidget.SetInteractor(self.iren)
+        boxWidget.SetPlaceFactor(1)
+        self.planes = vtk.vtkPlanes()
+            
+        # Place the interactor initially. The output of the reader is used to
+        # place the box widget.
+        boxWidget.SetInputData(self.parent.volumeReader.GetOutput())
+        boxWidget.PlaceWidget()
+        boxWidget.InsideOutOn()
+        boxWidget.SetEnabled(True)
+        boxWidget.AddObserver("StartInteractionEvent", self.StartInteraction)
+        boxWidget.AddObserver("InteractionEvent", self.ClipVolumeRender)
+        boxWidget.AddObserver("EndInteractionEvent", self.EndInteraction)
+
+        outlineProperty = boxWidget.GetOutlineProperty()
+        outlineProperty.SetRepresentationToWireframe()
+        outlineProperty.SetAmbient(1.0)
+        outlineProperty.SetAmbientColor(1, 1, 1)
+        outlineProperty.SetLineWidth(1)
+
+        selectedOutlineProperty = boxWidget.GetSelectedOutlineProperty()
+        selectedOutlineProperty.SetRepresentationToWireframe()
+        selectedOutlineProperty.SetAmbient(1.0)
+        selectedOutlineProperty.SetAmbientColor(1, 0, 0)
+        selectedOutlineProperty.SetLineWidth(1)
+
         self.ren.GetActiveCamera().Azimuth(45)
         self.ren.GetActiveCamera().Elevation(30)
         self.ren.ResetCameraClippingRange()
         self.ren.ResetCamera()
         
         self.iren.Initialize()
-        #self.ren.Render()
+        self.ren.Render()
         #self.renWin.Render()
         self.iren.Start()
+
+    # When interaction starts, the requested frame rate is increased.
+    def StartInteraction(self, obj, event):
+        self.ren.SetDesiredUpdateRate(10)
+    # When interaction ends, the requested frame rate is decreased to
+    # normal levels. This causes a full resolution render to occur.
+    def EndInteraction(self, obj, event):
+        self.ren.SetDesiredUpdateRate(0.001)
+
+    # The implicit function vtkPlanes is used in conjunction with the
+    # volume ray cast mapper to limit which portion of the volume is
+    # volume rendered.
+    def ClipVolumeRender(self, obj, event):
+        obj.GetPlanes(self.planes)
+        self.volumeMapper.SetClippingPlanes(self.planes)
 
 # Class for 2d slice rendering
 class SliceRender(SubWindow):
@@ -210,18 +271,18 @@ class SliceRender(SubWindow):
             self.sliceIndexPercent = sliceIndexPercent
 
 
-    def render(self, datapath):    
-        reader = vtk.vtkNIFTIImageReader()
-        reader.SetFileName(datapath)
-        reader.Update()
+    def render(self):    
+        #reader = vtk.vtkNIFTIImageReader()
+        #reader.SetFileName(datapath)
+        #reader.Update()
 
         viewer = vtk.vtkImageViewer2()
-        viewer.SetInputConnection(reader.GetOutputPort())
+        viewer.SetInputConnection(self.parent.volumeReader.GetOutputPort())
 
         viewer.SetupInteractor(self.iren)
         viewer.SetRenderWindow(self.renWin)
 
-        xMin, xMax, yMin, yMax, zMin, zMax = reader.GetExecutive().GetWholeExtent(reader.GetOutputInformation(0))
+        xMin, xMax, yMin, yMax, zMin, zMax = self.parent.volumeReader.GetExecutive().GetWholeExtent(self.parent.volumeReader.GetOutputInformation(0))
         if (self.orientation == 'x'):
             self.sliceIndex = int(self.sliceIndexPercent * (xMax - xMin) + xMin)
             viewer.SetSliceOrientationToYZ()
@@ -301,14 +362,14 @@ if __name__ == '__main__':
     # Add view to mainwindow
     view1 = VolumeRender(mainwindow, 0, 1)
     view1.render(usingMask=True)
-
+    
     view2 = SliceRender(mainwindow, 0, 0, 'z', 0.4)
-    view2.render('./data.nii')
+    view2.render()
 
     view3 = SliceRender(mainwindow, 1, 0, 'x', 0.4)
-    view3.render('./data.nii')
+    view3.render()
 
     view4 = SliceRender(mainwindow, 1, 1, 'y', 0.4)
-    view4.render('./data.nii')
-
+    view4.render()
+    
     sys.exit(app.exec_())
